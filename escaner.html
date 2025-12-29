@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+
+
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inventario con Escáner</title>
+
+  <!-- Manifest PWA (sin Service Worker automático por sandbox) -->
+  <link rel="manifest" href="data:application/json,{\"name\":\"Inventario Escáner\",\"short_name\":\"Inventario\",\"start_url\":\".\",\"display\":\"standalone\",\"background_color\":\"#f1f5f9\",\"theme_color\":\"#4f46e5\"}" />
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Lucide -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-100">
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+      const videoRef = React.useRef(null);
+      const [scanning, setScanning] = useState(false);
+      // 🔥 Firebase Firestore
+      const firebaseConfig = {
+  apiKey: "AIzaSyAuhRVBMzM8dz2RmZnV_Us0PBhAHO_J4hs",
+  authDomain: "inventario-escaner.firebaseapp.com",
+  projectId: "inventario-escaner",
+  storageBucket: "inventario-escaner.firebasestorage.app",
+  messagingSenderId: "170592105052",
+  appId: "1:170592105052:web:851f8e868c28112902ec99",
+  measurementId: "G-H7LCL8KD2R"
+};
+
+
+      const appFirebase = firebase.initializeApp(firebaseConfig);
+      const db = firebase.firestore();
+
+      const [items, setItems] = useState([]);
+
+      const [modelo, setModelo] = useState('');
+      const [codigo, setCodigo] = useState('');
+      const [bloqueado, setBloqueado] = useState('Desbloqueado');
+      const [vendido, setVendido] = useState(false);
+      const [search, setSearch] = useState('');
+      const [installPrompt, setInstallPrompt] = useState(null);
+
+      // 🔄 Guardar cambios en Firebase
+      useEffect(() => {
+        const unsub = db.collection('inventario').onSnapshot(snap => {
+          const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setItems(data);
+        });
+        return () => unsub();
+      }, []);
+
+      useEffect(() => {
+        lucide.createIcons();
+      });
+
+      useEffect(() => {
+        const handler = (e) => {
+          e.preventDefault();
+          setInstallPrompt(e);
+        };
+        window.addEventListener('beforeinstallprompt', handler);
+        return () => window.removeEventListener('beforeinstallprompt', handler);
+      }, []);
+
+      const startCameraScan = () => {
+  try {
+    const codeReader = new ZXing.BrowserBarcodeReader();
+    setScanning(true);
+
+    setTimeout(() => {
+      if (!videoRef.current) return;
+
+      videoRef.current.setAttribute("playsinline", true);
+      videoRef.current.setAttribute("autoplay", true);
+      videoRef.current.setAttribute("muted", true);
+
+      ZXing.BrowserBarcodeReader
+        .listVideoInputDevices()
+        .then(devices => {
+          if (!devices.length) {
+            alert("No se detectó cámara");
+            setScanning(false);
+            return;
+          }
+
+          // 📱 Cámara trasera
+          let deviceId = devices[0].deviceId;
+          const backCam = devices.find(d =>
+            d.label.toLowerCase().includes("back") ||
+            d.label.toLowerCase().includes("rear") ||
+            d.label.toLowerCase().includes("environment")
+          );
+          if (backCam) deviceId = backCam.deviceId;
+
+          codeReader.decodeFromVideoDevice(
+            deviceId,
+            videoRef.current,
+            (result, err) => {
+              if (result) {
+                setCodigo(result.text);
+
+                // 📳 Vibración
+                if (navigator.vibrate) navigator.vibrate(200);
+
+                // 🔊 Sonido
+                new Audio(
+                  "https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"
+                ).play();
+
+                codeReader.reset();
+                setScanning(false);
+              }
+            }
+          );
+        });
+    }, 200);
+  } catch (e) {
+    console.error(e);
+    alert("Error al abrir cámara. Usa HTTPS y Chrome.");
+    setScanning(false);
+  }
+};
+
+      //   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      //   videoRef.current.srcObject = stream;
+      //   await videoRef.current.play();
+      //   setScanning(true);
+
+      //   const detector = new BarcodeDetector({ formats: ['code_128','ean_13','ean_8','qr_code'] });
+
+      //   const scanLoop = async () => {
+      //     if (!scanning) return;
+      //     const codes = await detector.detect(videoRef.current);
+      //     if (codes.length > 0) {
+      //       setCodigo(codes[0].rawValue);
+      //       stream.getTracks().forEach(t => t.stop());
+      //       setScanning(false);
+      //       return;
+      //     }
+      //     requestAnimationFrame(scanLoop);
+      //   };
+      //   scanLoop();
+      // };
+
+      const addItem = async () => {
+        if (!modelo || !codigo) return;
+        await db.collection('inventario').add({
+          modelo,
+          codigo,
+          bloqueado,
+          vendido
+        });
+        setModelo('');
+        setCodigo('');
+        setBloqueado('Desbloqueado');
+        setVendido(false);
+      };
+
+      const exportExcel = () => {
+        const csv = [
+          ['Modelo','Código','Bloqueado','Vendido'],
+          ...items.map(i => [i.modelo, i.codigo, i.bloqueado, i.vendido ? 'Sí' : 'No'])
+        ].map(r => r.join(',')).join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'inventario.csv';
+        a.click();
+      };
+
+      const filtered = items.filter(i =>
+        i.modelo.toLowerCase().includes(search.toLowerCase()) ||
+        i.codigo.includes(search)
+      );
+
+      const resumen = {};
+      items.forEach(i => {
+        if (!i.vendido) resumen[i.modelo] = (resumen[i.modelo] || 0) + 1;
+      });
+
+      return (
+        <div className="max-w-6xl mx-auto p-6">
+          <h1 className="text-3xl font-bold mb-4 flex justify-between items-center">
+            📦 Inventario
+            {installPrompt && (
+              <button
+                onClick={() => installPrompt.prompt()}
+                className="bg-indigo-600 text-white px-3 py-1 rounded"
+              >Instalar App</button>
+            )}
+          </h1>
+
+          <div className="grid md:grid-cols-4 gap-3 mb-4">
+            <button
+              type="button"
+              onClick={() => startCameraScan()}
+              className="bg-indigo-600 text-white rounded flex items-center justify-center gap-2"
+            >
+              📷 Escanear cámara
+            </button>
+            <input className="p-2 rounded" placeholder="Modelo" value={modelo} onChange={e => setModelo(e.target.value)} />
+            <input className="p-2 rounded" placeholder="Código de barras" value={codigo} onChange={e => setCodigo(e.target.value)} />
+            <select className="p-2 rounded" value={bloqueado} onChange={e => setBloqueado(e.target.value)}>
+              <option>Desbloqueado</option>
+              <option>Bloqueado</option>
+            </select>
+            <button onClick={addItem} className="bg-green-600 text-white rounded">Agregar</button>
+          </div>
+
+          <div className="flex gap-3 mb-4">
+            <input className="p-2 rounded flex-1" placeholder="Buscar" value={search} onChange={e => setSearch(e.target.value)} />
+            <button onClick={exportExcel} className="bg-blue-600 text-white px-3 rounded">Exportar Excel</button>
+          </div>
+
+          <table className="w-full bg-white rounded shadow mb-6">
+            <thead className="bg-slate-200">
+              <tr>
+                <th className="p-2">Modelo</th>
+                <th className="p-2">Código</th>
+                <th className="p-2">Estado</th>
+                <th className="p-2">Vendido</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(i => (
+                <tr key={i.id} className="border-t">
+                  <td className="p-2">{i.modelo}</td>
+                  <td className="p-2">{i.codigo}</td>
+                  <td className={`p-2 ${i.bloqueado === 'Bloqueado' ? 'text-red-600' : 'text-blue-600'}`}>{i.bloqueado}</td>
+                  <td className="p-2">
+                    <input type="checkbox" checked={i.vendido} onChange={() => {
+                      setItems(items.map(x => x.id === i.id ? { ...x, vendido: !x.vendido } : x));
+                    }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {scanning && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+              <div className="bg-white p-4 rounded-xl">
+                <video ref={videoRef} className="w-72 h-72 rounded"></video>
+                <button
+                  className="mt-3 bg-red-600 text-white w-full rounded p-2"
+                  onClick={() => {
+                    videoRef.current.srcObject?.getTracks().forEach(t => t.stop());
+                    setScanning(false);
+                  }}
+                >Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          <h2 className="text-xl font-bold mb-2">📊 Resumen (Editable)</h2>
+<div className="space-y-4">
+  {Object.keys(resumen).map(modeloResumen => (
+    <div key={modeloResumen} className="bg-white p-4 rounded shadow">
+      <h3 className="font-semibold mb-2">{modeloResumen} — Disponibles: {resumen[modeloResumen]}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-100">
+            <tr>
+              <th className="p-2">Código</th>
+              <th className="p-2">Bloqueado</th>
+              <th className="p-2">Vendido</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.filter(i => i.modelo === modeloResumen).map(i => (
+              <tr key={i.id} className="border-t">
+                <td className="p-2">{i.codigo}</td>
+                <td className="p-2">
+                  <select
+                    value={i.bloqueado}
+                    onChange={e => setItems(items.map(x => x.id === i.id ? { ...x, bloqueado: e.target.value } : x))}
+                    className={`px-2 py-1 rounded text-white ${i.bloqueado === 'Bloqueado' ? 'bg-red-600' : 'bg-blue-600'}`}
+                  >
+                    <option>Desbloqueado</option>
+                    <option>Bloqueado</option>
+                  </select>
+                </td>
+                <td className="p-2 text-center">
+                  <input
+                    type="checkbox"
+                    checked={i.vendido}
+                    onChange={() => setItems(items.map(x => x.id === i.id ? { ...x, vendido: !x.vendido } : x))}
+                    className="accent-green-600"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ))}
+</div>
+</div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
